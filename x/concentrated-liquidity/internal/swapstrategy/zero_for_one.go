@@ -17,7 +17,6 @@ import (
 // With this strategy, we are moving to the left of the current
 // tick index and square root price.
 type zeroForOneStrategy struct {
-	isOutGivenIn   bool
 	sqrtPriceLimit sdk.Dec
 	storeKey       sdk.StoreKey
 	swapFee        sdk.Dec
@@ -43,23 +42,21 @@ func (s zeroForOneStrategy) GetSqrtTargetPrice(nextTickSqrtPrice sdk.Dec) sdk.De
 // amountZero is token out when swapping in given out and token in when swapping out given in.
 // amountOne is token in when swapping in given out and token out when swapping out given in.
 // TODO: improve tests
-func (s zeroForOneStrategy) ComputeSwapStep(sqrtPriceCurrent, sqrtPriceNextTick, liquidity, amountRemaining sdk.Dec) (sdk.Dec, sdk.Dec, sdk.Dec, sdk.Dec) {
-	// sqrtPriceTarget is the maximum of sqrtPriceNextTick or sqrtPriceLimit.
-	sqrtPriceTarget := s.GetSqrtTargetPrice(sqrtPriceNextTick)
-
+func (s zeroForOneStrategy) ComputeSwapStepInGivenOut(sqrtPriceCurrent, sqrtPriceTarget, liquidity, amountRemainingOut sdk.Dec) (sdk.Dec, sdk.Dec, sdk.Dec, sdk.Dec) {
 	// Estimate the amount of token zero needed until the target sqrt price is reached.
-	amountZero := math.CalcAmount0Delta(liquidity, sqrtPriceTarget, sqrtPriceCurrent, true) // N.B.: if this is false, causes infinite loop
+	amountZeroOut := math.CalcAmount0Delta(liquidity, sqrtPriceTarget, sqrtPriceCurrent, true) // N.B.: if this is false, causes infinite loop
 
-	// Calculate sqrtPriceNext on the amount of token remaining after fee.
-	amountRemainingLessFee := getAmountRemainingLessFee(amountRemaining, s.swapFee, s.isOutGivenIn)
+	// Calculate sqrtPriceNext on the amount of token remaining. Note that the
+	// fee is not charged as amountRemaining is amountOut, and we only charge fee on
+	// amount in.
 	var sqrtPriceNext sdk.Dec
 	// If have more of the amount remaining after fee than estimated until target,
 	// bound the next sqrtPriceNext by the target sqrt price.
-	if amountRemainingLessFee.GTE(amountZero) {
+	if amountRemainingOut.GTE(amountZeroOut) {
 		sqrtPriceNext = sqrtPriceTarget
 	} else {
 		// Otherwise, compute the next sqrt price based on the amount remaining after fee.
-		sqrtPriceNext = math.GetNextSqrtPriceFromAmount0RoundingUp(sqrtPriceCurrent, liquidity, amountRemainingLessFee)
+		sqrtPriceNext = math.GetNextSqrtPriceFromAmount0RoundingUp(sqrtPriceCurrent, liquidity, amountRemainingOut)
 	}
 
 	hasReachedTarget := sqrtPriceTarget == sqrtPriceNext
@@ -68,25 +65,52 @@ func (s zeroForOneStrategy) ComputeSwapStep(sqrtPriceCurrent, sqrtPriceNextTick,
 	// to complete the swap step. This implies that some of the amount remaining after fee is left over after the
 	// current swap step.
 	if !hasReachedTarget {
-		amountZero = math.CalcAmount0Delta(liquidity, sqrtPriceNext, sqrtPriceCurrent, true) // N.B.: if this is false, causes infinite loop
+		amountZeroOut = math.CalcAmount0Delta(liquidity, sqrtPriceNext, sqrtPriceCurrent, true) // N.B.: if this is false, causes infinite loop
 	}
 
 	// Calculate the amount of the other token given the sqrt price range.
-	amountOne := math.CalcAmount1Delta(liquidity, sqrtPriceNext, sqrtPriceCurrent, false)
+	amountOneIn := math.CalcAmount1Delta(liquidity, sqrtPriceNext, sqrtPriceCurrent, false)
 
 	// Handle fees.
 	// Note that fee is always charged on the amount in.
-	var feeChargeTotal sdk.Dec
-	if s.isOutGivenIn {
-		// amountZero is amount in.
-		feeChargeTotal = computeFeeChargePerSwapStepOutGivenIn(sqrtPriceCurrent, hasReachedTarget, amountZero, amountRemaining, s.swapFee)
+	feeChargeTotal := amountOneIn.Mul(s.swapFee)
+
+	return sqrtPriceNext, amountZeroOut, amountOneIn, feeChargeTotal
+}
+
+func (s zeroForOneStrategy) ComputeSwapStepOutGivenIn(sqrtPriceCurrent, sqrtPriceTarget, liquidity, amountZeroInRemaining sdk.Dec) (sdk.Dec, sdk.Dec, sdk.Dec, sdk.Dec) {
+	// Estimate the amount of token zero needed until the target sqrt price is reached.
+	amountZeroIn := math.CalcAmount0Delta(liquidity, sqrtPriceTarget, sqrtPriceCurrent, true) // N.B.: if this is false, causes infinite loop
+
+	// Calculate sqrtPriceNext on the amount of token remaining after fee.
+	amountZeroInRemainingLessFee := amountZeroInRemaining.Mul(sdk.OneDec().Sub(s.swapFee))
+	var sqrtPriceNext sdk.Dec
+	// If have more of the amount remaining after fee than estimated until target,
+	// bound the next sqrtPriceNext by the target sqrt price.
+	if amountZeroInRemainingLessFee.GTE(amountZeroIn) {
+		sqrtPriceNext = sqrtPriceTarget
 	} else {
-		// amountOne is amount in.
-		// TODO: multiplication with rounding up at precision end.
-		feeChargeTotal = amountOne.Mul(s.swapFee)
+		// Otherwise, compute the next sqrt price based on the amount remaining after fee.
+		sqrtPriceNext = math.GetNextSqrtPriceFromAmount0RoundingUp(sqrtPriceCurrent, liquidity, amountZeroInRemainingLessFee)
 	}
 
-	return sqrtPriceNext, amountZero, amountOne, feeChargeTotal
+	hasReachedTarget := sqrtPriceTarget == sqrtPriceNext
+
+	// If the sqrt price target was not reached, recalculate how much of the amount remaining after fee was needed
+	// to complete the swap step. This implies that some of the amount remaining after fee is left over after the
+	// current swap step.
+	if !hasReachedTarget {
+		amountZeroIn = math.CalcAmount0Delta(liquidity, sqrtPriceNext, sqrtPriceCurrent, true) // N.B.: if this is false, causes infinite loop
+	}
+
+	// Calculate the amount of the other token given the sqrt price range.
+	amountOneOut := math.CalcAmount1Delta(liquidity, sqrtPriceNext, sqrtPriceCurrent, false)
+
+	// Handle fees.
+	// Note that fee is always charged on the amount in.
+	feeChargeTotal := computeFeeChargePerSwapStepOutGivenIn(sqrtPriceCurrent, hasReachedTarget, amountZeroIn, amountZeroInRemaining, s.swapFee)
+
+	return sqrtPriceNext, amountZeroIn, amountOneOut, feeChargeTotal
 }
 
 // InitializeTickValue returns the initial tick value for computing swaps based

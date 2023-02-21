@@ -12,7 +12,7 @@ def get_next_sqrt_price(liquidity: Decimal, sqrt_price_current: Decimal, token_i
 def get_token_out(liquidity: Decimal, sqrt_price_current: Decimal, sqrt_price_next: Decimal) -> Decimal:
     """ Returns the token out when swapping token one for zero given the token in.
     """
-    return sdk_dec.mul(liquidity, sdk_dec.quo((sqrt_price_next - sqrt_price_current), sdk_dec.mul(sqrt_price_next, sqrt_price_current)))
+    return sdk_dec.quo(sdk_dec.mul(liquidity, (sqrt_price_next - sqrt_price_current)), sdk_dec.mul(sqrt_price_next, sqrt_price_current))
 
 def get_token_in_swap_in_given_out(liquidity: Decimal, sqrt_price_current: Decimal, sqrt_price_next: Decimal) -> Decimal:
     """ Returns the token in when swapping token one for zero given the token out.

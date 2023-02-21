@@ -23,7 +23,7 @@ def quo_custom_round(x: Decimal, y: Decimal, custom_round: int):
     return (x / y).quantize(exp=quantize_precision, context=Context(rounding=custom_round))
 
 def quo(x: Decimal, y: Decimal):
-    return quo_custom_round(x, y, ROUND_05UP)
+    return quo_custom_round(x, y, ROUND_HALF_EVEN)
 
 def quo_up(x: Decimal, y: Decimal):
     return quo_custom_round(x, y, ROUND_UP)
@@ -34,7 +34,7 @@ def quo_trunc(x: Decimal, y: Decimal):
 def new(value: str) -> Decimal:
     """ Return an equivalent of a Cosmos SDK Decimal with fixed precision. 
     """
-    return Decimal(value=value, context=Context(rounding=ROUND_05UP, flags=[Inexact, Rounded]))
+    return Decimal(value=value, context=Context(rounding=ROUND_05UP, flags=[Inexact, Rounded], Emin=-precision, Emax=precision, prec=precision))
 
 
 zero = new("0")
