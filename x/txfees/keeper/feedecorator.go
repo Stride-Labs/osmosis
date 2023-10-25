@@ -97,6 +97,7 @@ func (mfd MempoolFeeDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, simulate b
 }
 
 func (mfd MempoolFeeDecorator) getMinBaseGasPrice(ctx sdk.Context, baseDenom string, simulate bool, feeTx sdk.FeeTx) osmomath.Dec {
+	return osmomath.ZeroDec()
 	// In block execution (DeliverTx), its set to the governance decided upon consensus min fee.
 	minBaseGasPrice := types.ConsensusMinFee
 	// If we are in CheckTx, a separate function is ran locally to ensure sufficient fees for entering our mempool.
